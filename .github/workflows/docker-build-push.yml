@@ -1,39 +1,40 @@
-name: Build and Push Docker Image
+name: Docker Build, Push, and Deploy
 
 on:
   push:
-    branches:
-      - week02
+    branches: [ week02 ]
 
 jobs:
-  build-and-push:
+  build:
+    # --- YOUR EXISTING BUILD JOB UNCHANGED ---
+    # (keep everything here as it was)
+
+  deploy:
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=${{ github.event.repository.html_url }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            build.source=github-actions
-            build.workflow=${{ github.workflow }}
-            build.run_id=${{ github.run_id }}
-            build.run_number=${{ github.run_number }}
+      - name: Deploy to EC2 via SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids ${{ secrets.EC2_INSTANCE_ID }} \
+            --document-name "AWS-RunShellScript" \
+            --comment "Automated deployment from GitHub Actions" \
+            --parameters 'commands=[
+              "docker pull ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:latest",
+              "docker stop cs6620-app || true",
+              "docker rm cs6620-app || true",
+              "docker run -d --name cs6620-app --restart unless-stopped -p 80:5000 ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:latest"
+            ]' \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Verify deployment command sent
+        run: echo "Deployment command sent successfully to EC2 via SSM"
